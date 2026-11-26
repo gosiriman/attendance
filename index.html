@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>출퇴근 기록</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #f4f6f9;
+      color: #1f2937;
+    }
+    .card {
+      max-width: 440px;
+      margin: 0 auto;
+      background: #ffffff;
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 20px;
+      text-align: center;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: #374151;
+    }
+    select, input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 12px;
+      font-size: 15px;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      margin-bottom: 14px;
+      background: #fff;
+      color: #111827;
+    }
+    .btn-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    button {
+      padding: 15px;
+      font-size: 16px;
+      font-weight: 700;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      color: #fff;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .btn-in {
+      background: #2563eb;
+    }
+    .btn-out {
+      background: #059669;
+    }
+    .btn-cancel {
+      width: 100%;
+      margin-top: 10px;
+      background: #6b7280;
+      padding: 12px;
+      font-size: 14px;
+    }
+    .camera-stage {
+      display: none;
+      margin-top: 10px;
+    }
+    .camera-stage.active {
+      display: block;
+    }
+    .circle-frame {
+      position: relative;
+      width: 260px;
+      height: 260px;
+      margin: 0 auto 12px;
+      border-radius: 50%;
+      overflow: hidden;
+      border: 5px solid #2563eb;
+      background: #111827;
+      box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.2);
+    }
+    .circle-frame.locked {
+      border-color: #059669;
+      box-shadow: 0 0 0 4px rgba(5, 150, 105, 0.35);
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+    .guide-text {
+      text-align: center;
+      font-size: 15px;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 10px;
+    }
+    .status {
+      margin-top: 14px;
+      padding: 12px;
+      border-radius: 10px;
+      font-size: 14px;
+      line-height: 1.4;
+      background: #f3f4f6;
+      min-height: 20px;
+      word-break: break-word;
+      text-align: center;
+    }
+    .ok {
+      background: #ecfdf5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+    }
+    .err {
+      background: #fef2f2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>출퇴근 기록</h2>
+
+    <div id="homeView">
+      <label for="staffSelect">직원명부 선택</label>
+      <select id="staffSelect" onchange="syncCustomName()">
+        <option value="">-- 직원 선택 --</option>
+        <option value="홍길동">홍길동</option>
+        <option value="김철수">김철수</option>
+        <option value="이영희">이영희</option>
+      </select>
+
+      <label for="nameInput">이름 직접 입력 (명부에 없을 때)</label>
+      <input id="nameInput" type="text" placeholder="예: 홍길동" />
+
+      <div class="btn-row">
+        <button id="btnIn" type="button" class="btn-in" onclick="startFlow('출근')">출근</button>
+        <button id="btnOut" type="button" class="btn-out" onclick="startFlow('퇴근')">퇴근</button>
+      </div>
+    </div>
+
+    <div id="cameraStage" class="camera-stage">
+      <div id="guideText" class="guide-text">둥그런 원안에 얼굴을 위치시켜주세요</div>
+      <div id="circleFrame" class="circle-frame">
+        <video id="video" autoplay playsinline muted></video>
+      </div>
+      <button type="button" class="btn-cancel" onclick="resetToHome('취소되었습니다.')">취소하고 돌아가기</button>
+    </div>
+
+    <div id="status" class="status">직원명부에서 이름을 선택하고 출근 또는 퇴근을 누르세요.</div>
+  </div>
+
+  <canvas id="canvas" style="display:none;"></canvas>
+  <canvas id="detectCanvas" width="64" height="64" style="display:none;"></canvas>
+
+  <script>
+    const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwB-qbaxllBFfBa9GyWneY8wKpibjngFowtQ9TEsxhqdb11UB-eDvcg90k3fZzBkQl3jw/exec';
+
+    const staffSelect = document.getElementById('staffSelect');
+    const nameInput = document.getElementById('nameInput');
+    const homeView = document.getElementById('homeView');
+    const cameraStage = document.getElementById('cameraStage');
+    const circleFrame = document.getElementById('circleFrame');
+    const guideText = document.getElementById('guideText');
+    const videoEl = document.getElementById('video');
+    const canvasEl = document.getElementById('canvas');
+    const detectCanvas = document.getElementById('detectCanvas');
+    const statusEl = document.getElementById('status');
+    const btnIn = document.getElementById('btnIn');
+    const btnOut = document.getElementById('btnOut');
+
+    let currentType = '';
+    let currentName = '';
+    let streamRef = null;
+    let monitorTimer = null;
+    let stableFrames = 0;
+    let prevCenterLuma = null;
+    let isCapturing = false;
+
+    function isInsideAppsScript() {
+      return !!(window.google && window.google.script && window.google.script.run);
+    }
+
+    function populateStaff(list) {
+      if (!Array.isArray(list) || list.length === 0) return;
+      staffSelect.innerHTML = '<option value="">-- 직원 선택 --</option>';
+      list.forEach(function (name) {
+        const clean = String(name || '').trim();
+        if (!clean) return;
+        const opt = document.createElement('option');
+        opt.value = clean;
+        opt.textContent = clean;
+        staffSelect.appendChild(opt);
+      });
+    }
+
+    function loadStaffList() {
+      if (isInsideAppsScript()) {
+        try {
+          google.script.run
+            .withSuccessHandler(populateStaff)
+            .withFailureHandler(function () {})
+            .getStaffList();
+        } catch (e) {}
+        return;
+      }
+
+      fetch(APPS_SCRIPT_URL + '?action=staff')
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data && data.ok && Array.isArray(data.staff) && data.staff.length > 0) {
+            populateStaff(data.staff);
+          }
+        })
+        .catch(function () {});
+    }
+
+    function syncCustomName() {
+      if (staffSelect.value) {
+        nameInput.value = staffSelect.value;
+      }
+    }
+
+    function setStatus(msg, type) {
+      statusEl.className = 'status' + (type ? ' ' + type : '');
+      statusEl.textContent = msg;
+    }
+
+    function stopCameraLoop() {
+      if (monitorTimer) {
+        clearInterval(monitorTimer);
+        monitorTimer = null;
+      }
+      if (streamRef) {
+        streamRef.getTracks().forEach(track => track.stop());
+        streamRef = null;
+      }
+      videoEl.srcObject = null;
+      circleFrame.classList.remove('locked');
+      stableFrames = 0;
+      prevCenterLuma = null;
+      isCapturing = false;
+    }
+
+    function resetToHome(message, type) {
+      stopCameraLoop();
+      cameraStage.classList.remove('active');
+      homeView.style.display = 'block';
+      btnIn.disabled = false;
+      btnOut.disabled = false;
+      staffSelect.value = '';
+      nameInput.value = '';
+      currentType = '';
+      currentName = '';
+      if (message) {
+        setStatus(message, type || '');
+      }
+    }
+
+    function getCenterLuminance() {
+      const ctx = detectCanvas.getContext('2d');
+      ctx.drawImage(videoEl, 0, 0, 64, 64);
+      const data = ctx.getImageData(16, 16, 32, 32).data;
+      let sum = 0;
+      let count = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        count++;
+      }
+      return count ? sum / count : 0;
+    }
+
+    function capturePhotoBase64() {
+      const targetWidth = 480;
+      const vw = videoEl.videoWidth || 640;
+      const vh = videoEl.videoHeight || 480;
+      const targetHeight = Math.round((vh / vw) * targetWidth);
+
+      canvasEl.width = targetWidth;
+      canvasEl.height = targetHeight;
+
+      const ctx = canvasEl.getContext('2d');
+      ctx.drawImage(videoEl, 0, 0, targetWidth, targetHeight);
+      return canvasEl.toDataURL('image/jpeg', 0.6);
+    }
+
+    function sendAttendance(payload) {
+      if (isInsideAppsScript()) {
+        google.script.run
+          .withSuccessHandler(function (res) {
+            if (res && res.ok) {
+              resetToHome(res.message + ' (초기화면으로 복귀)', 'ok');
+            } else {
+              resetToHome((res && res.message) || '기록 실패', 'err');
+            }
+          })
+          .withFailureHandler(function (err) {
+            resetToHome('통신 오류: ' + err.message, 'err');
+          })
+          .recordAttendance(payload);
+        return;
+      }
+
+      fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (res && res.ok) {
+            resetToHome(res.message + ' (초기화면으로 복귀)', 'ok');
+          } else {
+            resetToHome((res && res.message) || '기록 실패', 'err');
+          }
+        })
+        .catch(function (err) {
+          resetToHome('통신 오류: ' + err.message, 'err');
+        });
+    }
+
+    function triggerAutoCapture() {
+      if (isCapturing) return;
+      isCapturing = true;
+      if (monitorTimer) {
+        clearInterval(monitorTimer);
+        monitorTimer = null;
+      }
+      circleFrame.classList.add('locked');
+      guideText.textContent = '촬영되었습니다! 전송 중...';
+      setStatus(currentName + ' 님 ' + currentType + ' 사진 전송 중...', '');
+
+      const base64 = capturePhotoBase64();
+      sendAttendance({
+        name: currentName,
+        type: currentType,
+        imageBase64: base64
+      });
+    }
+
+    async function startFlow(type) {
+      const name = (nameInput.value || staffSelect.value || '').trim();
+      if (!name) {
+        setStatus('먼저 직원명부에서 이름을 선택하거나 입력하세요.', 'err');
+        return;
+      }
+
+      currentName = name;
+      currentType = type;
+      btnIn.disabled = true;
+      btnOut.disabled = true;
+      homeView.style.display = 'none';
+      cameraStage.classList.add('active');
+      guideText.textContent = '둥그런 원안에 얼굴을 위치시켜주세요';
+      setStatus('실시간 전면 카메라를 여는 중입니다...', '');
+
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('이 브라우저에서는 카메라 스트림을 지원하지 않습니다.');
+        }
+
+        streamRef = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'user' }, width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        });
+
+        videoEl.srcObject = streamRef;
+        await videoEl.play();
+        setStatus('둥그런 원안에 얼굴을 위치시켜주세요', '');
+
+        stableFrames = 0;
+        prevCenterLuma = null;
+
+        monitorTimer = setInterval(function () {
+          if (isCapturing || videoEl.readyState < 2) return;
+          const luma = getCenterLuminance();
+          const hasSubject = luma > 25;
+          const steady = prevCenterLuma === null || Math.abs(luma - prevCenterLuma) < 18;
+          prevCenterLuma = luma;
+
+          if (hasSubject && steady) {
+            stableFrames++;
+            guideText.textContent = '좋습니다! 움직이지 마세요... (' + Math.min(stableFrames, 4) + '/4)';
+            if (stableFrames >= 4) {
+              triggerAutoCapture();
+            }
+          } else {
+            stableFrames = 0;
+            guideText.textContent = '둥그런 원안에 얼굴을 위치시켜주세요';
+          }
+        }, 250);
+      } catch (err) {
+        resetToHome('카메라 접근 실패: ' + err.message, 'err');
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', loadStaffList);
+  </script>
+</body>
+</html>
